@@ -1,134 +1,121 @@
 package Re::em::Server;
 use 5.0100;
+use Moose;
+use namespace::autoclean;
+
 our $VERSION = 0.01;
-use Moose::Role;
-use Try::Tiny;
-use IO::Socket;
-use IO::Lambda qw(:all);
-use IO::Lambda::Socket qw(:all);
+
+use IO::Socket ();
 use Plack::Util;
 use HTTP::Parser::XS qw(parse_http_request);
 use HTTP::Status;
 use HTTP::Date;
 
-use constant REQUEST_INCOMPLETE = -2;
-use constant REQUEST_BROKEN     = -1;
+use constant REQUEST_INCOMPLETE => -2;
+use constant REQUEST_BROKEN     => -1;
+use constant MAX_REQUEST_SIZE   => 131072;
 
-requires 'application';
+#requires 'application';
 
 has socket => (
-    isa     => 'IO::Socket::UNIX',
+    isa     => 'IO::Socket',
     is      => 'ro',
     builder => 'build_socket',
-    handles => {
-        read   => 'read_socket',
-        atmark => 'socket_not_atmark',
-        print  => 'write_all',
-    },
-
+    handles => { socket_accept => 'accept' },
 );
 
 sub build_socket {
-    IO::Socket::UNIX->new( Local => "/tmp/$0.sock", Listen => 5 );
+    IO::Socket::INET->new(
+        LocalPort => 4242,
+        Listen    => 5,
+    ) or confess $@;
+
+    #   IO::Socket::UNIX->new( Local => "/tmp/$0.sock", Listen => 5 );
 }
 
-has environment => ( isa => 'Hash', is => 'ro', required => 1 );
+has environment => ( isa => 'HashRef', is => 'ro', lazy_build => 1 );
+
+sub _build_environment {
+    {
+        SERVER_PORT         => 4242,
+        SERVER_NAME         => `hostname`,
+        SCRIPT_NAME         => $0,
+        'psgi.version'      => [ 1, 0 ],
+        'psgi.errors'       => *STDERR,
+        'psgi.url_scheme'   => 'http',
+        'psgi.run_once'     => Plack::Util::FALSE,
+        'psgi.multithread'  => Plack::Util::FALSE,
+        'psgi.multiprocess' => Plack::Util::FALSE,
+    };
+
+}
+
+sub run {
+    my ( $self, $app ) = @_;
+    $self->accept(
+        sub {
+            my $env = shift;
+            return [
+                '200',
+                [ 'Content-Type' => 'text/plain' ],
+                ["Hello World"],    # or IO::Handle-like object
+            ];
+        }
+    );
+}
 
 sub accept {
-    my ($self) = @_;
-    my $env = $self->environment;
-    my $res = [ 400, [ 'Content-Type' => 'text/plain' ], ['Bad Request'] ];
-
-    my $data = '';
-    io {
-        context $server;
-        accept {
-            again;
-              context getline, shift(@_), \( my $buf = '' );
-              tail { $data .= $_[0]; again; }
-        };
-    };
-
-    given ( parse_http_request( $data, $env ) ) {
-        when ( $_ > 0 ) {    # handle request
-
-            if ($use_keepalive) {
-                if ( my $c = $env->{HTTP_CONNECTION} ) {
-                    $use_keepalive = undef unless $c =~ /^\s*keep-alive\s*/i;
+    my ( $self, $app ) = @_;
+    while (1) {
+        if ( my $client = $self->socket_accept ) {
+            sysread( $client, ( my $data = '' ), MAX_REQUEST_SIZE );
+            my $env = $self->environment;
+            given ( parse_http_request( $data, $env ) ) {
+                when ( $_ > 0 ) {
+                    $env->{REMOTE_ADDR} = $client->peerhost;
+                    open my $input, "<", \$data;
+                    $env->{'psgi.input'} = $input;
+                    $self->handle_request( $env, $app ) or last;
                 }
-                else {
-                    $use_keepalive = undef;
-                }
+                when (REQUEST_BROKEN)     { }
+                when (REQUEST_INCOMPLETE) { }
             }
-
-            $data = substr $data, $_;
-
-            if ( $env->{CONTENT_LENGTH} ) {
-                while ( length $data < $env->{CONTENT_LENGTH} ) {
-                    $data .= $self->read_socket or return;
-                }
-            }
-
-            open my $input, "<", \$data;
-            $env->{'psgi.input'} = $input;
-            $res = Plack::Util::run_app $self->application, $env;
-
+            close $client;
         }
-        when ( $_ == REQUEST_INCOMPLETE ) { }
-        when ( $_ == REQUEST_BROKEN )     { }
-        default { confess "Something horrible happened: $_"; };
     }
+}
 
-    my $conn_value;
-    my @lines = (
-        "Date: @{[HTTP::Date::time2str()]}\015\012",
-        "Server: Re'em/$VERSION\015\012",
-    );
+sub handle_request {
+    my ( $self, $client, $env, $app ) = @_;
 
-    Plack::Util::header_iter(
-        $res->[1],
-        sub {
-            my ( $k, $v ) = @_;
-            if ( lc $k eq 'connection' ) {
-                $use_keepalive = undef
-                  if $use_keepalive && lc $v ne 'keep-alive';
-            }
-            else {
-                push @lines, "$k: $v\015\012";
-            }
-        }
-    );
+    my $res = [ 400, [ 'Content-Type' => 'text/plain' ], ['Bad Request'] ];
+    $res = Plack::Util::run_app $app, $env;
 
-    $use_keepalive = undef
-      if $use_keepalive
-          && !Plack::Util::header_exists( $res->[1], 'Content-Length' ) );
+    my $status  = HTTP::Status::status_message( $res->[0] );
+    my $date    = HTTP::Date::time2str();
+    my $headers = join '',
+      (
+        "HTTP/1.0 $res->[0] $status\015\012",
+        "Date: $date\015\012",
+        "Server: Plack-Server-Standalone/$VERSION\015\012",
+      );
 
-    push @lines, "Connection: keep-alive\015\012" if $use_keepalive;
+    Plack::Util::header_iter( $res->[1],
+        sub { $headers .= "$_[0]: $_[1]\015\012" } );
 
-    my $status = HTTP::Status::status_message( $res->[0] );
-    unshift @lines, "HTTP/1.0 $res->[0] $status\015\012";
-    push @lines, "\015\012";
+    print $client "$headers\015\012";
 
-    $self->write_all( join( '', @lines ) ) or return;
-
-    my $err;
-    my $done;
     try {
-          Plack::Util::foreach(
-              $res->[2],
-              sub {
-                  $self->write_all( $conn, $_[0], $self->{timeout} )
-                    or die "failed to send all data\n";
-              },
-          );
+        Plack::Util::foreach( $res->[2],
+            sub { print $client $_[0] or die "failed to send all data\n" },
+        );
     }
     catch {
-          given ($_) {
-              when (qr/^failed to send all data\n/) { return; }
-              default                               { confess $err };
-          }
+        when (qr/^failed to send all data\n/) { return; }
+        default                               { confess $_; };
     };
-    $use_keepalive;
+
+    return 1;
 }
 
 1;
