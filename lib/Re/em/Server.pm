@@ -15,7 +15,7 @@ use constant REQUEST_INCOMPLETE => -2;
 use constant REQUEST_BROKEN     => -1;
 use constant MAX_REQUEST_SIZE   => 131072;
 
-has port => ( isa => 'Int', is => 'ro', );
+has port => ( isa => 'Int', is => 'ro', default => 8080 );
 has host => ( isa => 'Str', is => 'ro', default => `hostname` );
 
 has socket => (
@@ -54,9 +54,9 @@ sub _build_environment {
 
 }
 
-has application => ( isa => 'CodeRef', is => 'rw', lazy_build => 1 );
+has app => ( isa => 'CodeRef', is => 'rw', lazy_build => 1 );
 
-sub _build_application {
+sub _build_app {
     return sub {
         my $env = shift;
         return [
@@ -69,7 +69,7 @@ sub _build_application {
 
 sub run {
     my ( $self, $app ) = @_;
-    $self->application($app);
+    $self->app($app);
     $self->accept();
     $self->clear_application;
 }
@@ -80,13 +80,12 @@ sub accept {
         if ( my $client = $self->socket_accept ) {
             sysread( $client, ( my $data = '' ), MAX_REQUEST_SIZE );
             my $env = $self->environment;
-            my $app = $self->application;
             given ( parse_http_request( $data, $env ) ) {
                 when ( $_ > 0 ) {
                     $env->{REMOTE_ADDR} = $client->peerhost;
                     open my $input, "<", \$data;
                     $env->{'psgi.input'} = $input;
-                    $self->handle_request( $client, $env, $app ) or last;
+                    $self->request( $client, $env, $self->app ) or last;
                 }
                 when (REQUEST_BROKEN)     { }
                 when (REQUEST_INCOMPLETE) { }
@@ -97,11 +96,10 @@ sub accept {
     }
 }
 
-sub handle_request {
+sub request {
     my ( $self, $client, $env, $app ) = @_;
 
-    my $res = [ 400, [ 'Content-Type' => 'text/plain' ], ['Bad Request'] ];
-    $res = Plack::Util::run_app $app, $env;
+    my $res = Plack::Util::run_app $app, $env;
 
     my $status  = HTTP::Status::status_message( $res->[0] );
     my $date    = HTTP::Date::time2str();
@@ -119,7 +117,7 @@ sub handle_request {
     my $done;
     try {
         Plack::Util::foreach( $res->[2],
-            sub { print $client $_[0] or die "failed to send all data\n" },
+            sub { print $client $_[0] or die "failed to send all data" },
         );
         $done = 1;
     }
