@@ -16,7 +16,7 @@ use constant REQUEST_BROKEN     => -1;
 use constant MAX_REQUEST_SIZE   => 131072;
 
 has port => ( isa => 'Int', is => 'ro', );
-has host => ( isa => 'Str', is => 'ro', );
+has host => ( isa => 'Str', is => 'ro', default => `hostname` );
 
 has socket => (
     isa     => 'IO::Socket',
@@ -39,9 +39,10 @@ sub build_socket {
 has environment => ( isa => 'HashRef', is => 'ro', lazy_build => 1 );
 
 sub _build_environment {
+    my $self = shift;
     {
-        SERVER_PORT         => 4242,
-        SERVER_NAME         => `hostname`,
+        SERVER_PORT         => $self->port,
+        SERVER_NAME         => $self->host,
         SCRIPT_NAME         => $0,
         'psgi.version'      => [ 1, 0 ],
         'psgi.errors'       => *STDERR,
