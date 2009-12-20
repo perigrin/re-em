@@ -29,9 +29,7 @@ has environment => ( isa => 'Hash', is => 'ro', required => 1 );
 
 sub accept {
     my ($self) = @_;
-    my $env    = $self->environment;
-    my $buf    = '';
-
+    my $env = $self->environment;
     my $res = [ 400, [ 'Content-Type' => 'text/plain' ], ['Bad Request'] ];
 
     my $data = '';
@@ -43,7 +41,6 @@ sub accept {
               tail { $data .= $_[0]; again; }
         };
     };
-    until ( $self->socket_atmark ) { $buf .= $self->read_socket }
 
     given ( parse_http_request( $data, $env ) ) {
         when ( $_ > 0 ) {    # handle request
@@ -57,15 +54,15 @@ sub accept {
                 }
             }
 
-            $buf = substr $buf, $_;
+            $data = substr $data, $_;
 
             if ( $env->{CONTENT_LENGTH} ) {
-                while ( length $buf < $env->{CONTENT_LENGTH} ) {
-                    $buf .= $self->read_socket or return;
+                while ( length $data < $env->{CONTENT_LENGTH} ) {
+                    $data .= $self->read_socket or return;
                 }
             }
 
-            open my $input, "<", \$buf;
+            open my $input, "<", \$data;
             $env->{'psgi.input'} = $input;
             $res = Plack::Util::run_app $self->application, $env;
 
