@@ -15,6 +15,9 @@ use constant REQUEST_INCOMPLETE => -2;
 use constant REQUEST_BROKEN     => -1;
 use constant MAX_REQUEST_SIZE   => 131072;
 
+has port => ( isa => 'Int', is => 'ro', );
+has host => ( isa => 'Str', is => 'ro', );
+
 has socket => (
     isa     => 'IO::Socket',
     is      => 'ro',
@@ -23,8 +26,10 @@ has socket => (
 );
 
 sub build_socket {
+    my ($self) = @_;
+
     IO::Socket::INET->new(
-        LocalPort => 4242,
+        LocalPort => $self->port,
         Listen    => 5,
     ) or confess $@;
 
@@ -65,6 +70,7 @@ sub run {
     my ( $self, $app ) = @_;
     $self->application($app);
     $self->accept();
+    $self->clear_application;
 }
 
 sub accept {
