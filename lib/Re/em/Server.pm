@@ -15,8 +15,6 @@ use constant REQUEST_INCOMPLETE => -2;
 use constant REQUEST_BROKEN     => -1;
 use constant MAX_REQUEST_SIZE   => 131072;
 
-#requires 'application';
-
 has socket => (
     isa     => 'IO::Socket',
     is      => 'ro',
@@ -75,7 +73,7 @@ sub accept {
                     $env->{REMOTE_ADDR} = $client->peerhost;
                     open my $input, "<", \$data;
                     $env->{'psgi.input'} = $input;
-                    $self->handle_request( $env, $app ) or last;
+                    $self->handle_request( $client, $env, $app ) or last;
                 }
                 when (REQUEST_BROKEN)     { }
                 when (REQUEST_INCOMPLETE) { }
@@ -111,10 +109,10 @@ sub handle_request {
         );
     }
     catch {
+        warn $_;
         when (qr/^failed to send all data\n/) { return; }
-        default                               { confess $_; };
+        default                               { confess $_ };
     };
-
     return 1;
 }
 
