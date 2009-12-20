@@ -15,6 +15,9 @@ use constant REQUEST_INCOMPLETE => -2;
 use constant REQUEST_BROKEN     => -1;
 use constant MAX_REQUEST_SIZE   => 131072;
 
+# TODO: port/host should be methods on the (coerced) socket
+# the socket itself should handle either named or TCP sockets
+
 has port => ( isa => 'Int', is => 'ro', default => 8080 );
 has host => ( isa => 'Str', is => 'ro', default => `hostname` );
 
