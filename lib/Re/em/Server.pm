@@ -91,6 +91,7 @@ sub accept {
                 when (REQUEST_INCOMPLETE) { }
             }
             close $client;
+            $self->clear_environment;
         }
     }
 }
