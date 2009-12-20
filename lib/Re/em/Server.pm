@@ -102,16 +102,16 @@ sub handle_request {
         sub { $headers .= "$_[0]: $_[1]\015\012" } );
 
     print $client "$headers\015\012";
-
+    my $done;
     try {
         Plack::Util::foreach( $res->[2],
             sub { print $client $_[0] or die "failed to send all data\n" },
         );
+        $done = 1;
     }
     catch {
-        warn $_;
-        when (qr/^failed to send all data\n/) { return; }
-        default                               { confess $_ };
+        when (qr/^failed  to send all data\n/) { return; }
+        default { confess $_ unless $done };
     };
     return 1;
 }
