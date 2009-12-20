@@ -5,7 +5,7 @@ use namespace::autoclean;
 
 our $VERSION = 0.01;
 
-use IO::Socket ();
+use IO::Socket;
 use Plack::Util;
 use HTTP::Parser::XS qw(parse_http_request);
 use HTTP::Status;
@@ -48,26 +48,32 @@ sub _build_environment {
 
 }
 
+has application => ( isa => 'CodeRef', is => 'rw', lazy_build => 1 );
+
+sub _build_application {
+    return sub {
+        my $env = shift;
+        return [
+            '200',
+            [ 'Content-Type' => 'text/plain' ],
+            ["Hello World"],    # or IO::Handle-like object
+        ];
+      }
+}
+
 sub run {
     my ( $self, $app ) = @_;
-    $self->accept(
-        sub {
-            my $env = shift;
-            return [
-                '200',
-                [ 'Content-Type' => 'text/plain' ],
-                ["Hello World"],    # or IO::Handle-like object
-            ];
-        }
-    );
+    $self->application($app);
+    $self->accept();
 }
 
 sub accept {
-    my ( $self, $app ) = @_;
+    my ($self) = @_;
     while (1) {
         if ( my $client = $self->socket_accept ) {
             sysread( $client, ( my $data = '' ), MAX_REQUEST_SIZE );
             my $env = $self->environment;
+            my $app = $self->application;
             given ( parse_http_request( $data, $env ) ) {
                 when ( $_ > 0 ) {
                     $env->{REMOTE_ADDR} = $client->peerhost;
@@ -93,9 +99,9 @@ sub handle_request {
     my $date    = HTTP::Date::time2str();
     my $headers = join '',
       (
-        "HTTP/1.0 $res->[0] $status\015\012",
+        "HTTP/1.1 $res->[0] $status\015\012",
         "Date: $date\015\012",
-        "Server: Plack-Server-Standalone/$VERSION\015\012",
+        "Server: Re'em/$VERSION\015\012",
       );
 
     Plack::Util::header_iter( $res->[1],
@@ -116,5 +122,6 @@ sub handle_request {
     return 1;
 }
 
+__PACKAGE__->meta->make_immutable;
 1;
 __END__
