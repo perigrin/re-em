@@ -3,6 +3,9 @@ use 5.0100;
 our $VERSION = 0.01;
 use Moose::Role;
 use Try::Tiny;
+use IO::Socket;
+use IO::Lambda qw(:all);
+use IO::Lambda::Socket qw(:all);
 use Plack::Util;
 use HTTP::Parser::XS qw(parse_http_request);
 use HTTP::Status;
@@ -14,16 +17,20 @@ use constant REQUEST_BROKEN     = -1;
 requires 'application';
 
 has socket => (
-    isa      => 'IO::Socket::UNIX',
-    is       => 'ro',
-    required => 1,
-    handles  => {
+    isa     => 'IO::Socket::UNIX',
+    is      => 'ro',
+    builder => 'build_socket',
+    handles => {
         read   => 'read_socket',
         atmark => 'socket_not_atmark',
         print  => 'write_all',
     },
 
 );
+
+sub build_socket {
+    IO::Socket::UNIX->new( Local => "/tmp/$0.sock", Listen => 5 );
+}
 
 has environment => ( isa => 'Hash', is => 'ro', required => 1 );
 
